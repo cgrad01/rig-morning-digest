@@ -1,0 +1,56 @@
+# Plan morning-digest § 3 and § 4 (ADR 0003). Saves /digest/<night> as one HTML file and
+# deploys it to GitHub Pages. The preview is never committed: it lives only in this run's
+# Pages artifact. The marker comes from the LANE_MARKER repo secret; with the secret
+# deleted, the same run uploads the page with "no marker set" over the same link.
+name: preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      night:
+        description: Night to preview (YYYY-MM-DD)
+        default: '2026-10-28'
+        required: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.16.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Save the page with a command
+        env:
+          LANE_MARKER: ${{ secrets.LANE_MARKER }}
+          NIGHT: ${{ inputs.night }}
+        run: |
+          echo "$NIGHT" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+          pnpm start > rig.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf localhost:8787/health > /dev/null && break; sleep 1; done
+          mkdir -p _site
+          curl -sf "localhost:8787/digest/$NIGHT" -o _site/index.html
+          grep -q '<span class="marker">' _site/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+          retention-days: 1
+      - id: deploy
+        uses: actions/deploy-pages@v4
